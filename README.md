@@ -20,7 +20,9 @@ The data was provided by the capstone programme as part of a Bayesian-optimisati
 | 8        | 8      | 40              | Tuning eight ML hyperparameters (e.g. learning rate, dropout, optimiser type)   |
 
 **Format:** for each function, `initial_inputs.npy` (an n × d array, with every input in [0, 1]) and `initial_outputs.npy` (n values). Every task is a **maximisation**.
+
 **Growth:** each week I submit one query per function through the portal, formatted as six-decimal values joined by hyphens (e.g. `0.419675-0.463269`), and receive one new output. All submissions and results are recorded in the `HISTORY` cell of the notebook.
+
 **Notable properties of the starting data:**
 
 - Function 1 is almost zero everywhere (1e-124 to 1e-15).
@@ -74,6 +76,7 @@ _Learned ARD length-scales (log scale). A shorter bar means a more important inp
 | Output transform | Makes wide-ranging outputs easier to model | log(y) for F5 |
 | Exploration mode | Maximin space-filling while there is no signal | F1, until any \|y\| > 0.01 |
 | TuRBO box size L | Adapts automatically: ×1.5 after an improvement, ×0.7 after a failure | Starts at 0.4 |
+
 **Weekly adjustment rule:**
 
 - Where a query improves on the best, I lower κ or ξ and shrink the search region (exploit).
@@ -82,7 +85,7 @@ _Learned ARD length-scales (log scale). A shorter bar means a more important inp
 
 Functions 7 and 8 are themselves ML hyperparameter-tuning problems, so this project is also a small case study in **Bayesian hyperparameter optimisation**.
 
-## WEEKLY RESULTS JUORNAL
+## WEEKLY RESULTS JOURNAL
 
 **Week 1 queries and the reasoning behind them:**
 | Function | Best starting value | Week 1 query | Strategy | GP prediction |
@@ -95,6 +98,7 @@ Functions 7 and 8 are themselves ML hyperparameter-tuning problems, so this proj
 | 6 | -0.714 | `0.423548-0.129091-0.738806-0.897785-0.000000` | Follow the low-x5, high-x3/x4 trend | -0.23 ± 0.29 |
 | 7 | 1.365 | `0.000000-0.566788-0.415090-0.175728-0.355442-0.779021` | Probe around the single standout point | 1.27 ± 0.14 |
 | 8 | 9.60 | `0.052325-0.141964-0.124313-0.014745-0.921651-0.374929-0.039243-0.262463` | Exploit the linear trend (low x1, x3, x7) | 10.19 ± 0.22 |
+
 **What I have learned so far:**
 
 - **Model reliability varies a lot.** The GP ranks unseen points very well for Functions 4 (LOO 0.97) and 8 (0.98), but poorly for Function 5 (0.23). One method does not suit all eight functions.
