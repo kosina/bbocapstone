@@ -20,9 +20,8 @@ The data was provided by the capstone programme as part of a Bayesian-optimisati
 | 8        | 8      | 40              | Tuning eight ML hyperparameters (e.g. learning rate, dropout, optimiser type)   |
 
 **Format:** for each function, `initial_inputs.npy` (an n × d array, with every input in [0, 1]) and `initial_outputs.npy` (n values). Every task is a **maximisation**.
-**Growth:** each week I submit one query per function through the portal, formatted as six-decimal values joined by hyphens (e.g. `0.419675-0.463269`), and receive one new output. All submissions and results are recorded in the `HISTORY` cell of the notebook.
+Growth:** each week I submit one query per function through the portal, formatted as six-decimal values joined by hyphens (e.g. `0.419675-0.463269`), and receive one new output. All submissions and results are recorded in the `HISTORY` cell of the notebook.
 **Notable properties of the starting data:**
-
 - Function 1 is almost zero everywhere (1e-124 to 1e-15).
 - Function 5 spans four orders of magnitude (0.1 to 1089).
 - Function 8 is close to linear (a straight-line fit explains 90% of the variance).
