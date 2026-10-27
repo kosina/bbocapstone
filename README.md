@@ -28,7 +28,7 @@ The data was provided by the capstone programme as part of a Bayesian-optimisati
 
 ![Initial data for the 2D functions](images/initial_data_2d.png)
 
-_Data for Functions 1 and 2 after Week 2. Colour shows the output: log10|y| for F1, y for F2. The orange circle marks the best point._
+_Data for Functions 1 and 2 after Week 4. Colour shows the output: log10|y| for F1, y for F2. The orange circle marks the best point._
 
 ## MODEL
 
@@ -37,8 +37,10 @@ _Data for Functions 1 and 2 after Week 2. Colour shows the output: log10|y| for 
 A GP predicts the output at any input **together with an uncertainty**. With only 10–40 expensive observations, that uncertainty is what makes principled exploration possible, so a GP was the natural choice. My configuration:
 
 - **ARD kernel** (a separate length-scale for each input), so the learned length-scales show which inputs matter. Weeks 1–2 used Matern 5/2 everywhere. **From Week 3 the kernel is chosen per function** from Matern 3/2, Matern 5/2 and RBF, by log marginal likelihood. In Week 3 the data chose RBF for Functions 2, 3, 5, 6 and 7, and Matern 5/2 for Functions 4 and 8.
+- **A minimum noise level (from Week 4).** The noise term may not fall below 0.03 (in normalised units). Without this floor the GP passed almost exactly through every point and was overconfident: three predictions missed by 4–5 standard deviations. A backtest on Weeks 2–3 cut the typical miss from 3.0 to 1.3 standard deviations, and in Week 4 the typical miss was 1.0. Function 4, whose outputs span -32 to +0.7, uses a lower floor (0.001) from Week 5, so that its peak is not blurred.
+- **A noise-aware incumbent (from Week 5).** "Best point" means the observed point with the highest _model estimate_, not the single highest reading. Week 4 re-tests showed repeat readings at almost the same spot differ by as much as the gains being chased, so the highest reading is often a lucky draw (the winner's curse).
 - **A white-noise term**, for noisy functions such as Function 2 and for numerical stability.
-- **Normalised outputs**, plus two transforms: **log(y)** for Function 5 because of its huge range, and from Week 2 **log10|y|** for Function 1, whose readings are too extreme (1e-124 to 0.006) to model directly.
+- **Normalised outputs**, plus transforms: **log(y)** for Function 5 because of its huge range. For Function 1, whose readings range from 1e-288 to 0.006, I used **log10|y|** in Week 2 and a sign-aware version from Week 4.
 - **Leave-one-out validation** (Spearman correlation) to measure how far each function's GP can be trusted.
 
 An **acquisition function** turns the GP's prediction and uncertainty into a score for each candidate point: Expected Improvement (EI) or Upper Confidence Bound (UCB). The best-scoring point is found in three steps:
@@ -62,30 +64,30 @@ When the methods agree, I exploit confidently. When they disagree, I stay closer
 
 ![Proposals by method](images/method_comparison.png)
 
-_Where each of the five methods proposes to query in Week 3. Overlapping lines mean the methods agree._
+_Where each of the five methods proposes to query in Week 5. Overlapping lines mean the methods agree._
 
 ## HYPERPARAMETER OPTIMISATION
 
 The project involves two layers of hyperparameters.
 
-**1. Surrogate-model hyperparameters, fitted automatically.** The GP's amplitude, one length-scale per input and its noise level are all fitted by **maximising the marginal likelihood**, using L-BFGS with 15 random restarts to avoid poor local fits. From Week 3 the kernel family is also a fitted choice: the one with the highest marginal likelihood wins. Length-scales are bounded to [0.02, 10] and noise to [1e-6, 0.1]. The fitted length-scales are useful in themselves: a short one marks an important input, and one at the upper bound marks an input the model considers irrelevant.
+**1. Surrogate-model hyperparameters, fitted automatically.** The GP's amplitude, one length-scale per input and its noise level are all fitted by **maximising the marginal likelihood**, using L-BFGS with 15 random restarts to avoid poor local fits. From Week 3 the kernel family is also a fitted choice: the one with the highest marginal likelihood wins. From Week 4 the noise level has a lower bound of 0.03, chosen by backtesting calibration on Weeks 2–3. Length-scales are bounded to [0.02, 10] and noise to [1e-6, 0.1]. The fitted length-scales are useful in themselves: a short one marks an important input, and one at the upper bound marks an input the model considers irrelevant.
 
 ![Learned length-scales](images/lengthscales.png)
 
-_Learned ARD length-scales after Week 2 (log scale). A shorter bar means a more important input. For Function 2 the model treats x2 as irrelevant, and for Function 3 it treats x1 and x2 as irrelevant._
+_Learned ARD length-scales after Week 4 (log scale). A shorter bar means a more important input. For Function 2 the model treats x2 as irrelevant, and for Function 3 it treats x1 and x2 as irrelevant._
 
 **2. Optimisation-strategy hyperparameters, set per function and reviewed weekly.** These control the balance between exploration and exploitation. They are set by reasoning from each function's brief and data, not by automated tuning, because every evaluation costs a week.
 
-| Setting              | Role                                             | Week 1                           | Week 2                            | Week 3                                                      |
-| -------------------- | ------------------------------------------------ | -------------------------------- | --------------------------------- | ----------------------------------------------------------- |
-| Kernel               | Smoothness assumption                            | Matern 5/2                       | Matern 5/2                        | Chosen per function (RBF or Matern 5/2)                     |
-| Acquisition function | EI (balanced) or UCB (explicit exploration)      | EI for F3–F6, UCB for F2, F7, F8 | Same, plus EI for F1              | Same; F1 back to maximin                                    |
-| κ (UCB)              | Exploration strength                             | 2                                | 1 for F2 and F7, 1.5 for F8       | 2 for F2 (explore again), 1 for F7 and F8                   |
-| ξ (EI)               | Exploration strength                             | 0.01                             | 0.005 for F4 and F6               | 0.001 for F4                                                |
-| Trust region         | Limits the search to ±`tr` around the best point | ±0.2 for F5                      | ±0.15 for F4 and F7, ±0.25 for F3 | ±0.1 for F4 and F7, ±0.15 for F3 and F6, ±0.2 for F5 and F8 |
-| Output transform     | Makes wide-ranging outputs easier to model       | log(y) for F5                    | Added log10\|y\| for F1           | Same                                                        |
-| Exploration mode     | Maximin space-filling while there is no signal   | F1                               | Off                               | F1 again                                                    |
-| TuRBO box size L     | ×1.5 after an improvement, ×0.7 after a failure  | 0.4                              | 0.6 or 0.28                       | 0.8 to 0.2, per function                                    |
+| Setting          | Role                                             | Week 1          | Week 2              | Week 3            | Week 4             | Week 5                         |
+| ---------------- | ------------------------------------------------ | --------------- | ------------------- | ----------------- | ------------------ | ------------------------------ |
+| Kernel           | Smoothness assumption                            | Matern 5/2      | Matern 5/2          | Per function      | Per function       | Per function                   |
+| Noise floor      | Minimum noise level                              | 1e-6            | 1e-6                | 1e-6              | 0.03               | 0.03 (F4: 0.001)               |
+| Incumbent        | What counts as "best"                            | Highest reading | Highest reading     | Highest reading   | Highest reading    | Highest model estimate         |
+| κ (UCB)          | Exploration strength                             | 2               | 1–1.5               | 1–2               | 0.5–1              | 3 for F2, 1.5 for F8, 1 for F7 |
+| ξ (EI)           | Exploration strength                             | 0.01            | 0.005 for F4, F6    | 0.001 for F4      | 0.001–0.005        | 0.05 for F4, 0.01 otherwise    |
+| Trust region     | Limits the search to ±`tr` around the best point | F5 only         | F3, F4, F7          | All except F1, F2 | ±0.05–0.2          | ±0.1–0.25; none for F2         |
+| Output transform | Makes wide-ranging outputs easier to model       | log(y) for F5   | + log10\|y\| for F1 | Same              | F1: sign-aware log | Same                           |
+| Exploration mode | Maximin space-filling                            | F1              | Off                 | F1 (whole space)  | F1 (upper right)   | F1 (around its best reading)   |
 
 **Weekly adjustment rule:**
 
@@ -97,84 +99,84 @@ Functions 7 and 8 are themselves ML hyperparameter-tuning problems, so this proj
 
 ## RESULTS
 
-_Status: Week 2 results received, Week 3 queries chosen. This section is updated each week._
+_Status: Week 4 results received, Week 5 queries chosen. This section is updated each week._
 
 ### Best value per function so far
 
-| Function | Starting best | After Week 1 | After Week 2 | Change so far          |
-| -------- | ------------- | ------------ | ------------ | ---------------------- |
-| 1        | 7.7e-16       | 7.7e-16      | 1.2e-13      | Still effectively zero |
-| 2        | 0.611         | 0.611        | 0.611        | No gain                |
-| 3        | -0.035        | -0.035       | -0.035       | No gain                |
-| 4        | -4.03         | -0.379       | **0.712**    | From -4.03 to +0.71    |
-| 5        | 1089          | 1639         | **2605**     | 2.4 times the start    |
-| 6        | -0.714        | **-0.462**   | -0.462       | 35% closer to zero     |
-| 7        | 1.365         | 1.365        | **1.462**    | +7%                    |
-| 8        | 9.60          | **9.891**    | 9.891        | +3%                    |
+| Function | Starting best | Week 1  | Week 2  | Week 3  | Week 4   | Model's estimate | Change so far                       |
+| -------- | ------------- | ------- | ------- | ------- | -------- | ---------------- | ----------------------------------- |
+| 1        | 7.7e-16       | 7.7e-16 | 1.2e-13 | 1.2e-13 | 1.2e-13  | –                | Still effectively zero              |
+| 2        | 0.611         | 0.611   | 0.611   | 0.611   | 0.611    | 0.570            | No gain (best reading partly noise) |
+| 3        | -0.035        | -0.035  | -0.035  | -0.021  | -0.021   | -0.034           | Within noise of the start           |
+| 4        | -4.03         | -0.379  | 0.712   | 0.712   | 0.712    | 0.493            | From -4.03 to about +0.5–0.7        |
+| 5        | 1089          | 1639    | 2605    | 4269    | **4585** | 4311             | 4.2 times the start                 |
+| 6        | -0.714        | -0.462  | -0.462  | -0.462  | -0.462   | -0.524           | About 30% closer to zero            |
+| 7        | 1.365         | 1.365   | 1.462   | 1.687   | 1.687    | 1.566            | +15–24%                             |
+| 8        | 9.60          | 9.891   | 9.891   | 9.891   | 9.891    | 9.887            | +3%                                 |
+
+The **model's estimate** averages nearby readings, so it is a fairer measure of where each function really stands than the single best reading. The gap between the two is small for Functions 5, 7 and 8, and large for Functions 3 and 4, where noise inflated the best reading.
 
 ![Best value so far](images/progress.png)
 
-_Best value found so far for each function. Week 0 is the best of the starting data._
+_Best value observed so far for each function. Week 0 is the best of the starting data._
 
 ### Results against predictions
 
-| Function | Week 1 result | z    | Week 2 result | z        |
-| -------- | ------------- | ---- | ------------- | -------- |
-| 1        | -0.0061       | –    | 1.2e-13       | -0.8     |
-| 2        | -0.026        | -1.8 | 0.593         | -0.3     |
-| 3        | -0.138        | -1.0 | -0.048        | 0.0      |
-| 4        | **-0.379**    | +2.0 | **0.712**     | **+5.0** |
-| 5        | **1639**      | -0.3 | **2605**      | +0.3     |
-| 6        | **-0.462**    | -0.8 | -0.517        | -0.7     |
-| 7        | 1.219         | -0.4 | **1.462**     | +1.5     |
-| 8        | **9.891**     | -1.3 | 9.859         | -1.0     |
+| Function | W1 result  | z    | W2 result | z        | W3 result  | z        | W4 result | z    |
+| -------- | ---------- | ---- | --------- | -------- | ---------- | -------- | --------- | ---- |
+| 1        | -0.0061    | –    | 1.2e-13   | -0.8     | 1.5e-288   | -5.9     | 4.9e-144  | –    |
+| 2        | -0.026     | -1.8 | 0.593     | -0.3     | 0.450      | -1.1     | 0.506     | -1.9 |
+| 3        | -0.138     | -1.0 | -0.048    | 0.0      | **-0.021** | +1.6     | -0.035    | -0.1 |
+| 4        | **-0.379** | +2.0 | **0.712** | **+5.0** | 0.494      | +0.6     | 0.588     | +0.6 |
+| 5        | **1639**   | -0.3 | **2605**  | +0.3     | **4269**   | +0.6     | **4585**  | +0.3 |
+| 6        | **-0.462** | -0.8 | -0.517    | -0.7     | -0.871     | **-4.7** | -0.613    | -1.7 |
+| 7        | 1.219      | -0.4 | **1.462** | +1.5     | **1.687**  | **+4.1** | 1.540     | -0.3 |
+| 8        | **9.891**  | -1.3 | 9.859     | -1.0     | 9.849      | -1.2     | 9.826     | -0.5 |
 
-The z-score is (result − prediction) ÷ predicted standard deviation, in the model's own scale. Bold marks a new best. **Four of eight queries improved the best in each week.** Across both weeks the mean z is +0.02, so on average the model's predictions are neither too high nor too low.
+Bold marks a new best reading. **12 of 32 queries improved the best: 4, 4, 3 and 1 per week.** After the Week 4 noise floor, every result except Function 1's fell within two standard deviations of its prediction (typical miss 1.0, against 3.0 before).
 
 ### What I have learned
 
-- **Exploiting a clear trend with a reliable model works.** Functions 4 and 5 improved in both weeks. Function 4 went from -4.03 to +0.71.
-- **Small steps beat big ones.** In Week 2, small steps gave new bests for Functions 4, 5 and 7 (0.04–0.23 from the best). Bigger, multi-input steps for Functions 6 and 8 (0.20 and 0.48) narrowly missed.
-- **Exploratory queries that miss still rule things out.** Function 2 has no second peak at the high-x1 edge. Function 3's optimum is not at x3 = 0. Function 1 has no strong source between its two negative readings.
-- **Functions 2 and 3 look flat near their best.** A near-repeat of Function 2's best gave 0.593 against 0.611, so noise of about ±0.02 may now matter as much as position.
-- **One model is not right for every function.** Function 4's Week 2 result was five standard deviations _above_ prediction, showing the model had the peak's shape wrong. Fitting three kernels showed the best one differs by function.
+- **Exploiting a clear trend with a reliable model works.** Function 5 has improved every week and is now 4.2 times its starting value. Function 4 went from -4.03 to about +0.5–0.7.
+- **Noise sets the limit of local refinement.** Week 4 re-tests showed repeat readings at almost the same point differ by about ±0.05 (Function 2) and ±0.007 (Function 3), as much as the gains I was chasing. Several "best so far" values were lucky draws. From Week 5 the search is anchored on the model's estimate instead.
+- **Small steps beat big ones, until the noise floor.** Steps of 0.02–0.26 gave most of the Week 2–3 gains. By Week 4, steps that small could only find noise.
+- **Agreement between methods is not proof.** All five methods agreed on Function 6's Week 3 query, and it was my worst miss.
+- **A model can be calibrated on average and still overconfident.** Average z-scores looked fine in Weeks 2–3, but three misses of 4–5 standard deviations showed the uncertainty was too narrow near sharp peaks. A minimum noise level fixed this.
+- **Failed explorations still rule things out.** Function 1 has nothing in its centre, top-left or top-right corners. Function 2 has no second peak at the high-x1 edge.
 
 ### Pipeline changes so far
 
-| After  | Change                                                | Why                                                                               |
-| ------ | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Week 1 | Reflect candidates instead of clipping them           | Clipping biased queries towards exactly 0 or 1                                    |
-| Week 1 | Multi-start L-BFGS-B refinement of the acquisition    | Random candidates alone were imprecise in 6–8 dimensions                          |
-| Week 1 | Anchor irrelevant inputs to the best known point      | They were otherwise set arbitrarily                                               |
-| Week 1 | Store and review predictions                          | To track how well calibrated the model is                                         |
-| Week 2 | Choose the kernel per function by marginal likelihood | Function 4's z = +5. For Function 5, the reliability score rose from 0.57 to 0.81 |
-| Week 2 | TuRBO holds irrelevant inputs at the best value       | It proposed far corners (the Function 3 override in Week 2)                       |
+| After  | Change                                                             | Why                                                                                            |
+| ------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Week 1 | Reflect candidates instead of clipping them                        | Clipping biased queries towards exactly 0 or 1                                                 |
+| Week 1 | Multi-start L-BFGS-B refinement of the acquisition                 | Random candidates alone were imprecise in 6–8 dimensions                                       |
+| Week 1 | Anchor irrelevant inputs to the best known point                   | They were otherwise set arbitrarily                                                            |
+| Week 1 | Store and review predictions                                       | To track how well calibrated the model is                                                      |
+| Week 2 | Choose the kernel per function by marginal likelihood              | Function 4's z = +5. For Function 5, the reliability score rose from 0.57 to 0.81              |
+| Week 2 | TuRBO holds irrelevant inputs at the best value                    | It proposed far corners (the Function 3 override in Week 2)                                    |
+| Week 3 | Minimum GP noise level of 0.03                                     | Three misses of 4–5 standard deviations. Typical miss: 3.0 → 1.3 (backtest), then 1.0 (Week 4) |
+| Week 3 | Sign-aware transform for Function 1                                | log10\|y\| counted negative readings as good                                                   |
+| Week 4 | Noise-aware incumbent: highest model estimate, not highest reading | Re-tests showed best readings inflated by noise                                                |
+| Week 4 | Function 4 noise floor lowered to 0.001                            | Its wide output range made the shared floor blur its peak                                      |
 
 ### Queries submitted
 
-| Function | Week 2 query (method)                                                          | Week 3 query (method)                                                          |
-| -------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| 1        | `0.540351-0.524565` (consensus)                                                | `0.051118-0.947227` (maximin)                                                  |
-| 2        | `0.690829-0.926564` (TuRBO)                                                    | `0.727137-0.926564` (TuRBO)                                                    |
-| 3        | `0.492581-0.861593-0.399583` (GP, override)                                    | `0.492581-0.611593-0.362899` (TuRBO)                                           |
-| 4        | `0.407459-0.418058-0.364200-0.420348` (GP)                                     | `0.375309-0.431898-0.364200-0.431114` (GP)                                     |
-| 5        | `0.039972-0.830719-0.986193-0.995123` (consensus)                              | `0.239972-0.999999-0.986193-0.999999` (GP)                                     |
-| 6        | `0.472525-0.247156-0.628220-0.999999-0.000000` (GP)                            | `0.423548-0.096277-0.881854-0.999999-0.000000` (consensus)                     |
-| 7        | `0.000000-0.491672-0.247422-0.250718-0.394579-0.698452` (consensus)            | `0.033992-0.491672-0.247422-0.279911-0.355814-0.698452` (TuRBO)                |
-| 8        | `0.052325-0.000000-0.124313-0.014745-0.999999-0.641250-0.299616-0.000000` (GP) | `0.180785-0.000000-0.124313-0.000000-0.999999-0.234896-0.223487-0.462463` (GP) |
+| Function | Week 3 (method)                                                                | Week 4 (method)                                                                | Week 5 (method)                                                                |
+| -------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| 1        | `0.051118-0.947227` (maximin)                                                  | `0.949988-0.949929` (maximin)                                                  | `0.450249-0.649384` (maximin, around best reading)                             |
+| 2        | `0.727137-0.926564` (TuRBO)                                                    | `0.689710-0.926564` (GP, re-test)                                              | `0.000000-0.926564` (GP, override: explore)                                    |
+| 3        | `0.492581-0.611593-0.362899` (TuRBO)                                           | `0.492581-0.611593-0.369207` (consensus, re-test)                              | `0.492581-0.811593-0.515252` (GP, override: explore)                           |
+| 4        | `0.375309-0.431898-0.364200-0.431114` (GP)                                     | `0.407459-0.425565-0.346036-0.420348` (GP)                                     | `0.363444-0.443846-0.387839-0.431114` (GP)                                     |
+| 5        | `0.239972-0.999999-0.986193-0.999999` (GP)                                     | `0.439972-0.999999-0.999999-0.999999` (GP)                                     | `0.639972-0.999999-0.999999-0.999999` (GP)                                     |
+| 6        | `0.423548-0.096277-0.881854-0.999999-0.000000` (consensus)                     | `0.460127-0.029091-0.638806-0.797785-0.000000` (GP)                            | `0.472525-0.305141-0.478220-0.903175-0.000000` (GP)                            |
+| 7        | `0.033992-0.491672-0.247422-0.279911-0.355814-0.698452` (TuRBO)                | `0.000000-0.491672-0.247422-0.315039-0.355814-0.739334` (TuRBO)                | `0.003010-0.491672-0.247422-0.291440-0.355814-0.698452` (TuRBO)                |
+| 8        | `0.180785-0.000000-0.124313-0.000000-0.999999-0.234896-0.223487-0.462463` (GP) | `0.000000-0.041964-0.196966-0.000000-0.999999-0.474929-0.000000-0.362463` (GP) | `0.000000-0.000000-0.000000-0.000000-0.999999-0.724929-0.000000-0.612463` (GP) |
 
-In Week 3 I accepted the recommended method for all eight functions. Two queries are deliberate tests:
-
-- **Function 3** is a near-repeat of its best point, to check whether -0.035 was real or lucky noise.
-- **Function 1** returns to space-filling, to look for a positive source elsewhere.
+Week 1–2 queries are in the notebook history.
 
 ![Method proposals on 2D surfaces](images/method_comparison_2d.png)
 
-_Week 3 proposals from all five methods on the 2D functions. For Function 1, the GP pipeline's maximin point is in the top-left gap. The other methods, modelling the size of the reading, still point to the centre, which Week 2 showed to be empty._
-
-![Function 1 GP surface, Week 2](images/f1_gp_surface.png)
-
-_Week 2: Function 1 modelled as log10|y|. The query (orange ×) targeted the strongest predicted signal between the two negative readings. It returned +1.2e-13, showing there is no strong source there._
+_Week 5 proposals from all five methods on the 2D functions._
 
 ### Repository contents
 
